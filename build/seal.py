@@ -117,11 +117,11 @@ class SealCog(commands.Cog):
         chosen = random.choice(seals)
 
         embed = discord.Embed(
-            title=f"🦭 Hải Cẩu #{chosen['id']}",
+            title=f"🦭 Hải Cẩu Aur Aur Aur",
             color=discord.Color.blue()
         )
         embed.set_image(url=chosen["url"])
-        embed.set_footer(text=f"Tổng số ảnh trong kho: {len(seals)}")
+        embed.set_footer(text=f"")
 
         await ctx.send(embed=embed)
 
