@@ -3,9 +3,11 @@ import discord
 from discord.ext import commands
 from dotenv import load_dotenv
 from database import auto_save_loop
+from keep_alive import keep_alive  # Tích hợp web server giữ cho Render luôn online
 
 load_dotenv()
-TOKEN = os.getenv("BOT_TOKEN")
+# Nhận linh hoạt tên biến môi trường BOT_TOKEN hoặc DISCORD_TOKEN
+TOKEN = os.getenv("BOT_TOKEN") or os.getenv("DISCORD_TOKEN")
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -41,7 +43,7 @@ class DailyQuestBot(commands.Bot):
             auto_save_loop.start()
             print("🔄 Đã khởi động vòng lặp Auto-save dữ liệu.")
 
-    # Bắt lỗi toàn cục cho tất cả các lệnh (Rất hữu ích nếu tách mỗi file 1 lệnh)
+    # Bắt lỗi toàn cục cho tất cả các lệnh
     async def on_command_error(self, ctx, error):
         if isinstance(error, commands.MissingPermissions):
             embed = discord.Embed(title="❌ KHÔNG CÓ QUYỀN", description="Bạn cần quyền **Administrator** để dùng lệnh này!", color=discord.Color.red())
@@ -59,6 +61,6 @@ class DailyQuestBot(commands.Bot):
         )
 
 if __name__ == "__main__":
+    keep_alive()  # Mở port cho Render nhận diện dịch vụ thành công
     bot = DailyQuestBot()
     bot.run(TOKEN)
-                                                                    
