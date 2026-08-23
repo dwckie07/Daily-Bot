@@ -1,131 +1,194 @@
 import os
 import json
-import aiohttp
+import urllib.request
 import asyncio
+import discord
 from discord.ext import tasks
 
-# ================= CẤU HÌNH GITHUB GIST =================
-# Nên dùng biến môi trường (Environment Variables) để bảo mật Token
-GIST_ID = os.environ.get("GIST_ID", "ĐIỀN_GIST_ID_CỦA_BẠN_VÀO_ĐÂY")
-GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN", "ĐIỀN_TOKEN_CỦA_BẠN_VÀO_ĐÂY")
+GIST_ID = os.environ.get("GIST_ID")
+GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN")
 
-HEADERS = {
-    "Authorization": f"token {GITHUB_TOKEN}",
-    "Accept": "application/vnd.github.v3+json"
-}
-GIST_URL = f"https://api.github.com/gists/{GIST_ID}"
-
-# ================= QUẢN LÝ BỘ NHỚ ĐỆM (CACHE) =================
+# ==================== BỘ NHỚ TẠM (RAM CACHE) ====================
 _DATA_CACHE = None
-_CHANNELS_CACHE = None
-_SEALS_CACHE = None  # Thêm cache cho hải cẩu
-_IS_DIRTY = False  # Cờ đánh dấu khi có thay đổi dữ liệu
+_IS_DIRTY = False
+_AUTO_SAVE_TASK_STARTED = False
 
-# ================= CÁC HÀM HỖ TRỢ HIỂN THỊ =================
-def format_points(points: int) -> str:
-    """Định dạng số điểm (vd: 1000 -> 1,000)"""
-    return f"{points:,}"
-
-def get_streak_text(streak: int) -> str:
-    """Hiển thị chuỗi streak kèm biểu tượng"""
-    return f"{streak} ngày {'🔥' if streak >= 3 else '🌱'}"
-
-# ================= TƯƠNG TÁC API GITHUB =================
-async def _fetch_gist():
-    """Tải dữ liệu từ Gist bằng aiohttp"""
-    async with aiohttp.ClientSession() as session:
-        async with session.get(GIST_URL, headers=HEADERS) as response:
-            if response.status == 200:
-                return await response.json()
+def _load_data_sync():
+    if not GITHUB_TOKEN or not GIST_ID:
+        return {}
+    
+    url = f"https://api.github.com/gists/{GIST_ID}"
+    headers = {
+        "Authorization": f"Bearer {GITHUB_TOKEN}",
+        "Accept": "application/vnd.github+json",
+        "User-Agent": "DiscordBot"
+    }
+    
+    try:
+        req = urllib.request.Request(url, headers=headers)
+        with urllib.request.urlopen(req) as response:
+            result = json.loads(response.read().decode('utf-8'))
+            files = result.get("files", {})
+            file_obj = files.get("user_data.json") or files.get("data.json")
+            
+            if file_obj and "content" in file_obj:
+                content = file_obj["content"]
+                return json.loads(content) if content.strip() else {}
             else:
-                print(f"Lỗi tải Gist: {response.status}")
-                return None
+                return {}
+    except Exception:
+        return {}
 
-async def _update_gist(files_data: dict):
-    """Cập nhật dữ liệu lên Gist"""
-    payload = {"files": files_data}
-    async with aiohttp.ClientSession() as session:
-        async with session.patch(GIST_URL, headers=HEADERS, json=payload) as response:
-            if response.status != 200:
-                print(f"Lỗi lưu Gist: {response.status}")
-
-# ================= QUẢN LÝ DỮ LIỆU NGƯỜI DÙNG =================
-async def load_data() -> dict:
+async def load_data():
     global _DATA_CACHE
-    if _DATA_CACHE is not None:
-        return _DATA_CACHE
-
-    gist_data = await _fetch_gist()
-    if gist_data and "files" in gist_data and "data.json" in gist_data["files"]:
-        content = gist_data["files"]["data.json"]["content"]
-        _DATA_CACHE = json.loads(content)
-    else:
-        _DATA_CACHE = {}
+    if _DATA_CACHE is None:
+        _DATA_CACHE = await asyncio.to_thread(_load_data_sync)
     return _DATA_CACHE
 
-async def save_data(data: dict):
-    """Cập nhật cache và bật cờ thông báo có thay đổi"""
+def _save_data_sync(data):
+    if not GITHUB_TOKEN or not GIST_ID:
+        return
+
+    url = f"https://api.github.com/gists/{GIST_ID}"
+    headers = {
+        "Authorization": f"Bearer {GITHUB_TOKEN}",
+        "Accept": "application/vnd.github+json",
+        "Content-Type": "application/json",
+        "User-Agent": "DiscordBot"
+    }
+    payload = json.dumps({
+        "files": {
+            "user_data.json": {
+                "content": json.dumps(data, ensure_ascii=False, indent=4)
+            }
+        }
+    }).encode('utf-8')
+    
+    try:
+        req = urllib.request.Request(url, data=payload, headers=headers, method="PATCH")
+        with urllib.request.urlopen(req):
+            pass
+    except Exception:
+        pass
+
+async def save_data(data):
     global _DATA_CACHE, _IS_DIRTY
     _DATA_CACHE = data
-    _IS_DIRTY = True
+    _IS_DIRTY = True  # Đánh dấu dữ liệu đã thay đổi để lưu sau 15 giây
 
-# ================= QUẢN LÝ PHÂN QUYỀN KÊNH =================
-async def load_allowed_channels(bot=None) -> dict:
-    global _CHANNELS_CACHE
-    if _CHANNELS_CACHE is not None:
-        return _CHANNELS_CACHE
-
-    gist_data = await _fetch_gist()
-    if gist_data and "files" in gist_data and "channels.json" in gist_data["files"]:
-        content = gist_data["files"]["channels.json"]["content"]
-        _CHANNELS_CACHE = json.loads(content)
-    else:
-        _CHANNELS_CACHE = {}
-    return _CHANNELS_CACHE
-
-async def save_allowed_channels(data: dict):
-    global _CHANNELS_CACHE, _IS_DIRTY
-    _CHANNELS_CACHE = data
-    _IS_DIRTY = True
-
-# ================= QUẢN LÝ DỮ LIỆU SEALS =================
-async def load_seals() -> dict:
-    global _SEALS_CACHE
-    if _SEALS_CACHE is not None:
-        return _SEALS_CACHE
-
-    gist_data = await _fetch_gist()
-    if gist_data and "files" in gist_data and "seals.json" in gist_data["files"]:
-        _SEALS_CACHE = json.loads(gist_data["files"]["seals.json"]["content"])
-    else:
-        _SEALS_CACHE = {}
-    return _SEALS_CACHE
-
-async def save_seals(data: dict):
-    global _SEALS_CACHE, _IS_DIRTY
-    _SEALS_CACHE = data
-    _IS_DIRTY = True
-
-# ================= VÒNG LẶP AUTO-SAVE =================
+# ==================== VÒNG LẶP TỰ ĐỘNG LƯU MỖI 15 GIÂY ====================
 @tasks.loop(seconds=15)
-async def auto_save_loop():
-    """Tự động lưu dữ liệu lên Gist mỗi 15 giây nếu có thay đổi"""
-    global _IS_DIRTY
-    if _IS_DIRTY:
-        files_payload = {}
-        if _DATA_CACHE is not None:
-            files_payload["data.json"] = {"content": json.dumps(_DATA_CACHE, indent=4)}
-        if _CHANNELS_CACHE is not None:
-            files_payload["channels.json"] = {"content": json.dumps(_CHANNELS_CACHE, indent=4)}
-        if _SEALS_CACHE is not None:
-            files_payload["seals.json"] = {"content": json.dumps(_SEALS_CACHE, indent=4)}
-            
-        if files_payload:
-            await _update_gist(files_payload)
-            _IS_DIRTY = False
+async def _auto_save_loop():
+    global _IS_DIRTY, _DATA_CACHE
+    if _IS_DIRTY and _DATA_CACHE is not None:
+        await asyncio.to_thread(_save_data_sync, _DATA_CACHE)
+        _IS_DIRTY = False
 
-@auto_save_loop.before_loop
-async def before_auto_save():
-    # Đợi bot sẵn sàng trước khi chạy vòng lặp
-    await asyncio.sleep(5)
+def start_auto_save_loop(bot=None):
+    global _AUTO_SAVE_TASK_STARTED
+    if not _AUTO_SAVE_TASK_STARTED:
+        _auto_save_loop.start()
+        _AUTO_SAVE_TASK_STARTED = True
+
+# ==================== PHẦN XỬ LÝ KÊNH ĐƯỢC PHÉP ====================
+def _load_allowed_channels_sync():
+    if not GITHUB_TOKEN or not GIST_ID:
+        return {}
     
+    url = f"https://api.github.com/gists/{GIST_ID}"
+    headers = {
+        "Authorization": f"Bearer {GITHUB_TOKEN}",
+        "Accept": "application/vnd.github+json",
+        "User-Agent": "DiscordBot"
+    }
+    
+    try:
+        req = urllib.request.Request(url, headers=headers)
+        with urllib.request.urlopen(req) as response:
+            result = json.loads(response.read().decode('utf-8'))
+            files = result.get("files", {})
+            file_obj = files.get("channel_allow.json")
+            if file_obj and "content" in file_obj:
+                content = file_obj["content"]
+                return json.loads(content) if content.strip() else {}
+            else:
+                return {}
+    except Exception:
+        return {}
+
+async def load_allowed_channels(bot=None):
+    data = await asyncio.to_thread(_load_allowed_channels_sync)
+    
+    if bot and data:
+        cleaned_data = {}
+        has_deleted = False
+
+        for cid_str, perms in list(data.items()):
+            if not cid_str.isdigit():
+                has_deleted = True
+                continue
+
+            cid = int(cid_str)
+            channel = bot.get_channel(cid)
+            if channel is None:
+                try:
+                    channel = await bot.fetch_channel(cid)
+                except (discord.NotFound, discord.HTTPException):
+                    channel = None
+
+            if channel is not None:
+                cleaned_data[cid_str] = perms
+            else:
+                has_deleted = True
+
+        if has_deleted:
+            await save_allowed_channels(cleaned_data)
+            return cleaned_data
+
+    return data
+
+def _save_allowed_channels_sync(data):
+    if not GITHUB_TOKEN or not GIST_ID:
+        return
+
+    url = f"https://api.github.com/gists/{GIST_ID}"
+    headers = {
+        "Authorization": f"Bearer {GITHUB_TOKEN}",
+        "Accept": "application/vnd.github+json",
+        "Content-Type": "application/json",
+        "User-Agent": "DiscordBot"
+    }
+    
+    payload = json.dumps({
+        "files": {
+            "channel_allow.json": {
+                "content": json.dumps(data, ensure_ascii=False, indent=4)
+            }
+        }
+    }).encode('utf-8')
+    
+    try:
+        req = urllib.request.Request(url, data=payload, headers=headers, method="PATCH")
+        with urllib.request.urlopen(req):
+            pass
+    except Exception:
+        pass
+
+async def save_allowed_channels(data):
+    await asyncio.to_thread(_save_allowed_channels_sync, data)
+
+def get_streak_text(streak_days: int) -> str:
+    if streak_days < 3:
+        return f"🧊 {max(0, streak_days)} ngày"
+    return f"🔥 {streak_days} ngày"
+
+def format_points(points: int, shorten: bool = False) -> str:
+    if shorten:
+        if points >= 1_000_000:
+            val = round(points / 1_000_000, 1)
+            return f"{val:.1f}M".replace(".", ",") if val % 1 != 0 else f"{int(val)}M"
+        elif points >= 1_000:
+            val = round(points / 1_000, 1)
+            return f"{val:.1f}k".replace(".", ",") if val % 1 != 0 else f"{int(val)}k"
+        return str(points)
+    return f"{points:,}".replace(",", ".")
