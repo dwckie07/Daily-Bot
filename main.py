@@ -1,66 +1,56 @@
 import os
+import asyncio
 import discord
 from discord.ext import commands
-from dotenv import load_dotenv
-from database import auto_save_loop
-from keep_alive import keep_alive  # Tích hợp web server giữ cho Render luôn online
+from keep_alive import keep_alive
+from database import load_allowed_channels, start_auto_save_loop
 
-load_dotenv()
-# Nhận linh hoạt tên biến môi trường BOT_TOKEN hoặc DISCORD_TOKEN
-TOKEN = os.getenv("BOT_TOKEN") or os.getenv("DISCORD_TOKEN")
+BOT_TOKEN = os.environ.get("BOT_TOKEN")
 
 intents = discord.Intents.default()
 intents.message_content = True
 intents.members = True
 
-class DailyQuestBot(commands.Bot):
-    def __init__(self):
-        super().__init__(
-            command_prefix=commands.when_mentioned_or("k.", "K."),
-            intents=intents,
-            help_command=None
-        )
+bot = commands.Bot(
+    command_prefix=["k.", "K."], 
+    intents=intents, 
+    case_insensitive=True,
+    help_command=None
+)
 
-    async def setup_hook(self):
-        # Quét tự động tất cả các file .py trong thư mục build/
-        build_dir = "build"
-        if os.path.exists(build_dir):
-            for root, _, files in os.walk(build_dir):
-                for file in files:
-                    if file.endswith(".py") and not file.startswith("__"):
-                        # Chuyển đường dẫn tệp thành định dạng module của Python (ví dụ: build.admin)
-                        relative_path = os.path.relpath(os.path.join(root, file), ".")
-                        module_name = relative_path[:-3].replace(os.sep, ".")
-                        
-                        try:
-                            await self.load_extension(module_name)
-                            print(f"✅ Đã tải Module: {module_name}")
-                        except Exception as e:
-                            print(f"❌ Lỗi tải Module {module_name}: {e}")
+@bot.check
+async def restrict_channel(ctx):
+    if ctx.guild and ctx.author.guild_permissions.administrator: 
+        return True
+    allowed_channels = await load_allowed_channels()
+    ch_perms = allowed_channels.get(str(ctx.channel.id), {})
+    if isinstance(ch_perms, bool):
+        return ch_perms
+    return ch_perms.get("command", False) is True
 
-        # Khởi động vòng lặp tự động lưu
-        if not auto_save_loop.is_running():
-            auto_save_loop.start()
-            print("🔄 Đã khởi động vòng lặp Auto-save dữ liệu.")
+@bot.event
+async def on_command_error(ctx, error):
+    if isinstance(error, (commands.CheckFailure, commands.CommandNotFound)):
+        pass
+    else:
+        print(f"❌ Lỗi thực thi lệnh: {error}")
 
-    # Bắt lỗi toàn cục cho tất cả các lệnh
-    async def on_command_error(self, ctx, error):
-        if isinstance(error, commands.MissingPermissions):
-            embed = discord.Embed(title="❌ KHÔNG CÓ QUYỀN", description="Bạn cần quyền **Administrator** để dùng lệnh này!", color=discord.Color.red())
-            await ctx.send(embed=embed)
-        elif isinstance(error, (commands.MissingRequiredArgument, commands.BadArgument)):
-            embed = discord.Embed(title="⚠️ SAI CÚ PHÁP", description=f"Vui lòng kiểm tra lại cú pháp lệnh `{ctx.command.name}`.", color=discord.Color.gold())
-            await ctx.send(embed=embed)
+@bot.event
+async def on_ready():
+    start_auto_save_loop(bot)
+    print(f"🤖 Bot {bot.user.name} đã kết nối thành công!")
 
-    async def on_ready(self):
-        print("-" * 30)
-        print(f"🚀 Bot đã online: {self.user.display_name} (ID: {self.user.id})")
-        await self.change_presence(
-            status=discord.Status.online,
-            activity=discord.Activity(type=discord.ActivityType.listening, name="k.help | Daily Quest")
-        )
+async def main():
+    keep_alive()
+    async with bot:
+        await bot.load_extension("build.set_up")
+        await bot.load_extension("build.check")
+        await bot.load_extension("build.member")
+        await bot.load_extension("build.rank")
+        await bot.load_extension("build.admin")
+        await bot.start(BOT_TOKEN)
 
 if __name__ == "__main__":
-    keep_alive()  # Mở port cho Render nhận diện dịch vụ thành công
-    bot = DailyQuestBot()
-    bot.run(TOKEN)
+    asyncio.run(main())
+
+    
