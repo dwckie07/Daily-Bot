@@ -1,0 +1,6 @@
+discord.py
+Flask
+Pillow
+aiohttp
+pilmoji
+python-dotenv
