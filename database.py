@@ -74,9 +74,8 @@ def _save_data_sync(data):
 async def save_data(data):
     global _DATA_CACHE, _IS_DIRTY
     _DATA_CACHE = data
-    _IS_DIRTY = True  # Đánh dấu dữ liệu đã thay đổi để lưu sau 15 giây
+    _IS_DIRTY = True
 
-# ==================== VÒNG LẶP TỰ ĐỘNG LƯU MỖI 15 GIÂY ====================
 @tasks.loop(seconds=15)
 async def _auto_save_loop():
     global _IS_DIRTY, _DATA_CACHE
@@ -177,6 +176,64 @@ def _save_allowed_channels_sync(data):
 async def save_allowed_channels(data):
     await asyncio.to_thread(_save_allowed_channels_sync, data)
 
+# ==================== PHẦN XỬ LÝ DỮ LIỆU HẢI CẨU (SEAL) ====================
+def _load_seal_data_sync():
+    if not GITHUB_TOKEN or not GIST_ID:
+        return []
+    
+    url = f"https://api.github.com/gists/{GIST_ID}"
+    headers = {
+        "Authorization": f"Bearer {GITHUB_TOKEN}",
+        "Accept": "application/vnd.github+json",
+        "User-Agent": "DiscordBot"
+    }
+    
+    try:
+        req = urllib.request.Request(url, headers=headers)
+        with urllib.request.urlopen(req) as response:
+            result = json.loads(response.read().decode('utf-8'))
+            files = result.get("files", {})
+            file_obj = files.get("seal_data.json")
+            if file_obj and "content" in file_obj:
+                content = file_obj["content"]
+                return json.loads(content) if content.strip() else []
+            return []
+    except Exception:
+        return []
+
+async def load_seal_data():
+    return await asyncio.to_thread(_load_seal_data_sync)
+
+def _save_seal_data_sync(data):
+    if not GITHUB_TOKEN or not GIST_ID:
+        return
+
+    url = f"https://api.github.com/gists/{GIST_ID}"
+    headers = {
+        "Authorization": f"Bearer {GITHUB_TOKEN}",
+        "Accept": "application/vnd.github+json",
+        "Content-Type": "application/json",
+        "User-Agent": "DiscordBot"
+    }
+    
+    payload = json.dumps({
+        "files": {
+            "seal_data.json": {
+                "content": json.dumps(data, ensure_ascii=False, indent=4)
+            }
+        }
+    }).encode('utf-8')
+    
+    try:
+        req = urllib.request.Request(url, data=payload, headers=headers, method="PATCH")
+        with urllib.request.urlopen(req):
+            pass
+    except Exception:
+        pass
+
+async def save_seal_data(data):
+    await asyncio.to_thread(_save_seal_data_sync, data)
+
 def get_streak_text(streak_days: int) -> str:
     if streak_days < 3:
         return f"🧊 {max(0, streak_days)} ngày"
@@ -192,3 +249,4 @@ def format_points(points: int, shorten: bool = False) -> str:
             return f"{val:.1f}k".replace(".", ",") if val % 1 != 0 else f"{int(val)}k"
         return str(points)
     return f"{points:,}".replace(",", ".")
+        
