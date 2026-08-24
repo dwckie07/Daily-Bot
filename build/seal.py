@@ -1,5 +1,6 @@
 import re
 import random
+import asyncio
 import discord
 from discord.ext import commands
 from database import load_allowed_channels, load_seal_data, save_seal_data
@@ -10,7 +11,7 @@ class SealCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
-    # ==================== 1. TỰ ĐỘNG THÊM ẢNH HẢI CẨU ====================
+    # ==================== 1. TỰ ĐỘNG LƯU ẢNH / GIF HẢI CẨU ====================
     @commands.Cog.listener()
     async def on_message(self, message):
         if message.author.bot or not message.guild:
@@ -28,14 +29,35 @@ class SealCog(commands.Cog):
         if not has_seal_perm:
             return
 
-        # Lấy URL ảnh từ File đính kèm hoặc Đường link
         image_url = None
+
+        # Trường hợp 1: Tệp đính kèm trực tiếp (ảnh/GIF)
         if message.attachments:
-            image_url = message.attachments[0].url
-        else:
-            match = URL_REGEX.search(message.content)
-            if match:
-                image_url = match.group(0)
+            attachment = message.attachments[0]
+            if attachment.content_type and attachment.content_type.startswith("image/"):
+                image_url = attachment.url
+
+        # Trường hợp 2: Đường link web (Tenor, Giphy, Direct Link...)
+        elif URL_REGEX.search(message.content):
+            # Chờ 1.5s để Discord giải mã link Tenor/Giphy thành Embed
+            await asyncio.sleep(1.5)
+            
+            try:
+                fetched_msg = await message.channel.fetch_message(message.id)
+                if fetched_msg.embeds:
+                    emb = fetched_msg.embeds[0]
+                    if emb.image:
+                        image_url = emb.image.url
+                    elif emb.thumbnail:
+                        image_url = emb.thumbnail.url
+            except Exception:
+                pass
+
+            # Dự phòng nếu là direct link
+            if not image_url:
+                match = URL_REGEX.search(message.content)
+                if match:
+                    image_url = match.group(0)
 
         if not image_url:
             return
@@ -55,7 +77,7 @@ class SealCog(commands.Cog):
         await message.add_reaction("✅")
         await message.add_reaction("❌")
 
-    # ==================== 2. BẤM ❌ ĐỂ XÓA VÀ DỒN ID CÁC ẢNH PHÍA SAU ====================
+    # ==================== 2. THẢ EMOJI ❌ ĐỂ HỦY VÀ DỒN ID ====================
     @commands.Cog.listener()
     async def on_raw_reaction_add(self, payload):
         if payload.user_id == self.bot.user.id or str(payload.emoji) != "❌":
@@ -83,10 +105,10 @@ class SealCog(commands.Cog):
         if target_index is None:
             return
 
-        # Xóa ảnh chọn
+        # Xóa mục được chọn
         seals.pop(target_index)
 
-        # Dồn ID của tất cả ảnh phía sau xuống -1
+        # Dồn ID của tất cả ảnh phía sau
         for idx, item in enumerate(seals):
             item["id"] = idx + 1
 
@@ -101,14 +123,14 @@ class SealCog(commands.Cog):
             except Exception:
                 pass
 
-    # ==================== 3. LỆNH k.seal LẤY NGẪU NHIÊN ẢNH ====================
+    # ==================== 3. LỆNH k.seal LẤY NGẪU NHIÊN ẢNH / GIF ====================
     @commands.command(name="seal")
     async def seal(self, ctx):
         seals = await load_seal_data()
         if not seals:
             embed = discord.Embed(
                 title="🦭 HẢI CẨU",
-                description="Kho hiện chưa có ảnh hải cẩu nào!",
+                description="Kho hiện chưa có ảnh/GIF hải cẩu nào!",
                 color=discord.Color.red()
             )
             await ctx.send(embed=embed)
@@ -117,14 +139,14 @@ class SealCog(commands.Cog):
         chosen = random.choice(seals)
 
         embed = discord.Embed(
-            title=f"🦭 Hải Cẩu Aur Aur Aur",
+            title=f"🦭 Hải Cẩu #{chosen['id']}",
             color=discord.Color.blue()
         )
         embed.set_image(url=chosen["url"])
-        embed.set_footer(text=f"")
+        embed.set_footer(text=f"Tổng số ảnh/GIF trong kho: {len(seals)}")
 
         await ctx.send(embed=embed)
 
 async def setup(bot):
     await bot.add_cog(SealCog(bot))
-    
+                
