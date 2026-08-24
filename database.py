@@ -234,6 +234,64 @@ def _save_seal_data_sync(data):
 async def save_seal_data(data):
     await asyncio.to_thread(_save_seal_data_sync, data)
 
+# ==================== PHẦN XỬ LÝ DỮ LIỆU KIKI ====================
+def _load_kiki_data_sync():
+    if not GITHUB_TOKEN or not GIST_ID:
+        return []
+    
+    url = f"https://api.github.com/gists/{GIST_ID}"
+    headers = {
+        "Authorization": f"Bearer {GITHUB_TOKEN}",
+        "Accept": "application/vnd.github+json",
+        "User-Agent": "DiscordBot"
+    }
+    
+    try:
+        req = urllib.request.Request(url, headers=headers)
+        with urllib.request.urlopen(req) as response:
+            result = json.loads(response.read().decode('utf-8'))
+            files = result.get("files", {})
+            file_obj = files.get("kiki_data.json")
+            if file_obj and "content" in file_obj:
+                content = file_obj["content"]
+                return json.loads(content) if content.strip() else []
+            return []
+    except Exception:
+        return []
+
+async def load_kiki_data():
+    return await asyncio.to_thread(_load_kiki_data_sync)
+
+def _save_kiki_data_sync(data):
+    if not GITHUB_TOKEN or not GIST_ID:
+        return
+
+    url = f"https://api.github.com/gists/{GIST_ID}"
+    headers = {
+        "Authorization": f"Bearer {GITHUB_TOKEN}",
+        "Accept": "application/vnd.github+json",
+        "Content-Type": "application/json",
+        "User-Agent": "DiscordBot"
+    }
+    
+    payload = json.dumps({
+        "files": {
+            "kiki_data.json": {
+                "content": json.dumps(data, ensure_ascii=False, indent=4)
+            }
+        }
+    }).encode('utf-8')
+    
+    try:
+        req = urllib.request.Request(url, data=payload, headers=headers, method="PATCH")
+        with urllib.request.urlopen(req):
+            pass
+    except Exception:
+        pass
+
+async def save_kiki_data(data):
+    await asyncio.to_thread(_save_kiki_data_sync, data)
+
 def get_streak_text(streak_days: int) -> str:
     if streak_days < 3:
         return f"🧊 {max(0, streak_days)} ngày"
