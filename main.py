@@ -49,6 +49,7 @@ async def main():
         await bot.load_extension("build.rank")
         await bot.load_extension("build.admin")
         await bot.load_extension("build.seal")
+        await bot.load_extension("build.kiki")
         await bot.start(BOT_TOKEN)
 
 if __name__ == "__main__":
