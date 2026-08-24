@@ -107,10 +107,10 @@ class SetupCog(commands.Cog):
     @commands.has_permissions(administrator=True)
     async def allow(self, ctx, channel_input: str, perm_type: str, status: str):
         perm_type_clean = perm_type.lower()
-        if perm_type_clean not in ["image", "command", "seal"]:
+        if perm_type_clean not in ["image", "command", "seal", "kiki"]:
             embed = discord.Embed(
                 title="⚠️ QUYỀN KHÔNG HỢP LỆ",
-                description="Vui lòng chọn loại quyền:\n• `image`: Gửi ảnh điểm danh\n• `command`: Dùng lệnh bot\n• `seal`: Nhận ảnh hải cẩu\n\n**Cú pháp:** `k.allow <#kênh/ID> <image/command/seal> <true/false>`",
+                description="Vui lòng chọn loại quyền:\n• `image`: Gửi ảnh điểm danh\n• `command`: Dùng lệnh bot\n• `seal`: Nhận ảnh hải cẩu\n• `kiki`: Nhận ảnh Kiki\n\n**Cú pháp:** `k.allow <#kênh/ID> <image/command/seal/kiki> <true/false>`",
                 color=discord.Color.gold()
             )
             return await ctx.send(embed=embed)
@@ -134,12 +134,13 @@ class SetupCog(commands.Cog):
         data = await load_allowed_channels()
         ch_info = data.get(clean_id, {})
         if isinstance(ch_info, bool):
-            ch_info = {"command": ch_info, "image": False, "seal": False}
+            ch_info = {"command": ch_info, "image": False, "seal": False, "kiki": False}
 
         type_map = {
             "image": "Gửi ảnh/link điểm danh (image)",
             "command": "Dùng lệnh bot (command)",
-            "seal": "Nhận ảnh Hải cẩu (seal)"
+            "seal": "Nhận ảnh Hải cẩu (seal)",
+            "kiki": "Nhận ảnh Kiki (kiki)"
         }
         type_label = type_map.get(perm_type_clean, perm_type_clean)
 
@@ -150,7 +151,7 @@ class SetupCog(commands.Cog):
             embed = discord.Embed(title="✅ CẤP QUYỀN KÊNH THÀNH CÔNG", description=f"Kênh <#{clean_id}> đã được **bật** quyền **{type_label}**!", color=discord.Color.green())
         else:
             ch_info[perm_type_clean] = False
-            if not ch_info.get("image") and not ch_info.get("command") and not ch_info.get("seal"):
+            if not any(ch_info.values()):
                 data.pop(clean_id, None)
             else:
                 data[clean_id] = ch_info
@@ -176,12 +177,13 @@ class SetupCog(commands.Cog):
         channel_list_str = ""
         for idx, (cid, perms) in enumerate(data.items(), start=1):
             if isinstance(perms, bool):
-                perms = {"command": perms, "image": False, "seal": False}
+                perms = {"command": perms, "image": False, "seal": False, "kiki": False}
             img_status = "✅ Cho phép" if perms.get("image") else "❌ Tắt"
             cmd_status = "✅ Cho phép" if perms.get("command") else "❌ Tắt"
             seal_status = "✅ Cho phép" if perms.get("seal") else "❌ Tắt"
+            kiki_status = "✅ Cho phép" if perms.get("kiki") else "❌ Tắt"
             
-            channel_list_str += f"**{idx}.** <#{cid}>\n   • 🖼️ Điểm danh (`image`): {img_status}\n   • 💬 Dùng lệnh (`command`): {cmd_status}\n   • 🦭 Hải cẩu (`seal`): {seal_status}\n\n"
+            channel_list_str += f"**{idx}.** <#{cid}>\n   • 🖼️ Điểm danh (`image`): {img_status}\n   • 💬 Dùng lệnh (`command`): {cmd_status}\n   • 🦭 Hải cẩu (`seal`): {seal_status}\n   • 🎨 Kiki (`kiki`): {kiki_status}\n\n"
 
         embed = discord.Embed(title="📋 DANH SÁCH KÊNH ĐƯỢC CẤP QUYỀN", description=channel_list_str, color=discord.Color.blue())
         embed.set_footer(text=f"Tổng số: {len(data)} kênh")
@@ -207,4 +209,4 @@ class SetupCog(commands.Cog):
 
 async def setup(bot):
     await bot.add_cog(SetupCog(bot))
-        
+    
