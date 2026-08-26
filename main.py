@@ -1,9 +1,11 @@
 import os
+import signal
+import sys
 import asyncio
 import discord
 from discord.ext import commands
 from keep_alive import keep_alive
-from database import load_allowed_channels, start_auto_save_loop
+from database import load_allowed_channels, start_auto_save_loop, preload_all_data, flush_all_caches_sync
 
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
 
@@ -18,6 +20,16 @@ bot = commands.Bot(
     help_command=None
 )
 
+# ==================== Graceful Shutdown (Bắt tín hiệu Render tắt/restart) ====================
+def handle_shutdown(sig, frame):
+    print("⚠️ Phát hiện tín hiệu ngắt/restart từ Render! Tiến hành xả dữ liệu khẩn cấp...")
+    flush_all_caches_sync()
+    print("✅ Đã lưu toàn bộ RAM Cache xuống Gist an toàn.")
+    sys.exit(0)
+
+signal.signal(signal.SIGTERM, handle_shutdown)
+signal.signal(signal.SIGINT, handle_shutdown)
+
 @bot.check
 async def restrict_channel(ctx):
     if ctx.guild and ctx.author.guild_permissions.administrator: 
@@ -30,15 +42,18 @@ async def restrict_channel(ctx):
 
 @bot.event
 async def on_command_error(ctx, error):
-    if isinstance(error, (commands.CheckFailure, commands.CommandNotFound)):
+    if isinstance(error, commands.CommandOnCooldown):
+        await ctx.send(f"⏳ Bớt spam lại nha! Thử lại sau **{error.retry_after:.1f}s**.", delete_after=3)
+    elif isinstance(error, (commands.CheckFailure, commands.CommandNotFound)):
         pass
     else:
         print(f"❌ Lỗi thực thi lệnh: {error}")
 
 @bot.event
 async def on_ready():
+    await preload_all_data()
     start_auto_save_loop(bot)
-    print(f"🤖 Bot {bot.user.name} đã kết nối thành công!")
+    print(f"🤖 Bot {bot.user.name} đã kết nối thành công và sẵn sàng xử lý!")
 
 async def main():
     keep_alive()
