@@ -1,17 +1,20 @@
 import re
 import random
 import asyncio
+from collections import deque
 import discord
 from discord.ext import commands
 from database import load_allowed_channels, load_seal_data, save_seal_data
 
 URL_REGEX = re.compile(r'https?://[^\s]+', re.IGNORECASE)
 
+# Bộ nhớ đệm 3 ảnh xuất hiện gần nhất để tránh lặp trùng
+RECENT_SEAL_IDS = deque(maxlen=3)
+
 class SealCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
-    # ==================== 1. TỰ ĐỘNG LƯU ẢNH / GIF HẢI CẨU ====================
     @commands.Cog.listener()
     async def on_message(self, message):
         if message.author.bot or not message.guild:
@@ -31,17 +34,12 @@ class SealCog(commands.Cog):
 
         image_url = None
 
-        # Trường hợp 1: Tệp đính kèm trực tiếp (ảnh/GIF)
         if message.attachments:
             attachment = message.attachments[0]
             if attachment.content_type and attachment.content_type.startswith("image/"):
                 image_url = attachment.url
-
-        # Trường hợp 2: Đường link web (Tenor, Giphy, Direct Link...)
         elif URL_REGEX.search(message.content):
-            # Chờ 1.5s để Discord giải mã link Tenor/Giphy thành Embed
             await asyncio.sleep(1.5)
-            
             try:
                 fetched_msg = await message.channel.fetch_message(message.id)
                 if fetched_msg.embeds:
@@ -53,7 +51,6 @@ class SealCog(commands.Cog):
             except Exception:
                 pass
 
-            # Dự phòng nếu là direct link
             if not image_url:
                 match = URL_REGEX.search(message.content)
                 if match:
@@ -77,7 +74,6 @@ class SealCog(commands.Cog):
         await message.add_reaction("✅")
         await message.add_reaction("❌")
 
-    # ==================== 2. THẢ EMOJI ❌ ĐỂ HỦY VÀ DỒN ID ====================
     @commands.Cog.listener()
     async def on_raw_reaction_add(self, payload):
         if payload.user_id == self.bot.user.id or str(payload.emoji) != "❌":
@@ -105,10 +101,8 @@ class SealCog(commands.Cog):
         if target_index is None:
             return
 
-        # Xóa mục được chọn
         seals.pop(target_index)
 
-        # Dồn ID của tất cả ảnh phía sau
         for idx, item in enumerate(seals):
             item["id"] = idx + 1
 
@@ -123,8 +117,8 @@ class SealCog(commands.Cog):
             except Exception:
                 pass
 
-    # ==================== 3. LỆNH k.seal LẤY NGẪU NHIÊN ẢNH / GIF ====================
     @commands.command(name="seal")
+    @commands.cooldown(1, 2, commands.BucketType.user)
     async def seal(self, ctx):
         seals = await load_seal_data()
         if not seals:
@@ -136,7 +130,13 @@ class SealCog(commands.Cog):
             await ctx.send(embed=embed)
             return
 
-        chosen = random.choice(seals)
+        # Cơ chế lọc ảnh trùng 3 lượt gần nhất
+        available = [s for s in seals if s["id"] not in RECENT_SEAL_IDS]
+        if not available:
+            available = seals
+
+        chosen = random.choice(available)
+        RECENT_SEAL_IDS.append(chosen["id"])
 
         embed = discord.Embed(
             title=f"🦭 Hải Cẩu #{chosen['id']}",
@@ -149,4 +149,4 @@ class SealCog(commands.Cog):
 
 async def setup(bot):
     await bot.add_cog(SealCog(bot))
-                
+    
